@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Score Caster — Admin Panel</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 24px;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; margin-bottom: 16px;
+  }
+  input, select {
+    background: #0d1117; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 8px 10px; font-size: 14px; outline: none;
+  }
+  input:focus { border-color: var(--accent); }
+  button {
+    background: #21262d; border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.danger { background: #da3633; border-color: #da3633; color: #fff; }
+  button.small { padding: 4px 9px; font-size: 12px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+  .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.pending { background: #bb80091f; color: var(--yellow); }
+  .badge.active { background: #2ea04326; color: var(--green); }
+  .badge.suspended { background: #f8514926; color: var(--red); }
+  .badge.expired { background: #f8514926; color: var(--red); }
+  .muted { color: var(--muted); }
+  .msg { padding: 8px 12px; border-radius: 6px; margin: 10px 0; font-size: 13px; display: none; }
+  .msg.ok { display: block; background: #2ea04326; color: var(--green); }
+  .msg.err { display: block; background: #f8514926; color: var(--red); }
+  .login-box { max-width: 380px; margin: 80px auto 0; }
+  .expiry-input { width: 130px; }
+  .actions { display: flex; gap: 4px; flex-wrap: wrap; }
+  .hdr { display: flex; justify-content: space-between; align-items: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- login -->
+  <div id="loginBox" class="card login-box">
+    <h1>🔐 Admin Panel</h1>
+    <p class="sub">Score Caster account management</p>
+    <input id="pw" type="password" placeholder="Admin password" style="width:100%" onkeydown="if(event.key==='Enter')adminLogin()">
+    <div style="height:10px"></div>
+    <button class="primary" style="width:100%" onclick="adminLogin()">Sign in</button>
+    <div id="loginMsg" class="msg"></div>
+  </div>
+
+  <!-- dashboard -->
+  <div id="dash" style="display:none">
+    <div class="hdr">
+      <div>
+        <h1>Score Caster — Admin Panel</h1>
+        <p class="sub" id="stats"></p>
+      </div>
+      <div class="row">
+        <button onclick="loadUsers()">↻ Refresh</button>
+        <button onclick="adminLogout()">Sign out</button>
+      </div>
+    </div>
+
+    <div id="msg" class="msg"></div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>User</th><th>Status</th><th>Expires</th><th>Last seen</th>
+            <th>Created</th><th>Last IP</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="userRows"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <strong>➕ Create account</strong>
+      <p class="sub" style="margin:4px 0 10px">Hand out credentials directly (user is active immediately).</p>
+      <div class="row">
+        <input id="nu" placeholder="username" style="width:150px">
+        <input id="np" placeholder="password" style="width:150px">
+        <input id="ne" type="date" class="expiry-input">
+        <button class="primary" onclick="createUser()">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let users = [];
+
+function showMsg(text, ok) {
+  const m = $("msg");
+  m.textContent = text;
+  m.className = "msg " + (ok ? "ok" : "err");
+  setTimeout(() => { m.className = "msg"; }, 4000);
+}
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: "same-origin",
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && !path.includes("/login")) { showLogin(); throw new Error("401"); }
+  return j;
+}
+
+function adminLogin() {
+  api("/api/admin/login", { password: $("pw").value })
+    .then(j => j.ok ? showDash() : showLoginMsg(j.error || "Wrong password", false))
+    .catch(() => {});
+}
+function showLoginMsg(t, ok) { const m = $("loginMsg"); m.textContent = t; m.className = "msg " + (ok ? "ok" : "err"); }
+function adminLogout() { api("/api/admin/logout", {}).then(showLogin); }
+function showLogin() { $("loginBox").style.display = "block"; $("dash").style.display = "none"; }
+function showDash() {
+  $("loginBox").style.display = "none"; $("dash").style.display = "block";
+  $("pw").value = ""; loadUsers();
+}
+
+async function loadUsers() {
+  const j = await api("/api/admin/users");
+  if (!j.ok) return;
+  users = j.users;
+  const counts = {};
+  users.forEach(u => counts[u.status] = (counts[u.status] || 0) + 1);
+  $("stats").textContent = `${users.length} account(s) — ${counts.pending||0} pending · ${counts.active||0} active · ${counts.suspended||0} suspended`;
+  render();
+}
+
+function expiryBadge(u) {
+  const active = u.status === "active";
+  if (active && u.expiry && u.expiry < new Date().toISOString().slice(0,10))
+    return `<span class="badge expired">EXPIRED</span>`;
+  return `<span class="badge ${u.status}">${u.status.toUpperCase()}</span>`;
+}
+
+function render() {
+  const tb = $("userRows");
+  if (!users.length) { tb.innerHTML = `<tr><td colspan="7" class="muted">No accounts yet</td></tr>`; return; }
+  tb.innerHTML = users.map(u => {
+    const status = expiryBadge(u);
+    const expiry = u.expiry
+      ? `<input type="date" class="expiry-input" value="${u.expiry}" id="exp_${esc(u.username)}" onchange="setExpiry('${esc(u.username)}', this.value)">`
+      : `<input type="date" class="expiry-input" id="exp_${esc(u.username)}" onchange="setExpiry('${esc(u.username)}', this.value)">`;
+    return `<tr>
+      <td><strong>${esc(u.username)}</strong></td>
+      <td>${status}</td>
+      <td>${expiry}</td>
+      <td class="muted">${u.last_seen ? esc(u.last_seen.slice(0,16).replace("T"," ")) : "never"}</td>
+      <td class="muted">${esc(u.created || "")}</td>
+      <td class="muted">${esc(u.last_ip || "")}</td>
+      <td class="actions">${actions(u)}</td>
+    </tr>`;
+  }).join("");
+}
+
+function actions(u) {
+  const btn = (label, action, cls="small") =>
+    `<button class="${cls}" onclick="doAction('${action}','${esc(u.username)}')">${label}</button>`;
+  const out = [];
+  if (u.status === "pending") out.push(btn("✔ Approve", "approve", "small primary"));
+  if (u.status !== "active") out.push(btn("Activate", "activate"));
+  if (u.status !== "suspended") out.push(btn("Suspend", "suspend"));
+  out.push(btn("Reset pw", "resetpw"));
+  out.push(u.device_id ? btn("🔓 Reset device", "resetdevice") : btn("🔒 No device", "resetdevice"));
+  out.push(btn("🗑", "delete", "small danger"));
+  return out.join("");
+}
+
+function esc(s) { return String(s).replace(/'/g, "\\'").replace(/[<>&"]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c])); }
+
+async function doAction(action, username) {
+  if (action === "delete" && !confirm(`Delete account "${username}"?`)) return;
+  let body = { action, username };
+  if (action === "resetdevice") {
+    if (!confirm(`Unlock device for "${username}"? Their next login will bind to whatever PC signs in.`)) return;
+    body = { action: "reset_device", username };
+  }
+  if (action === "resetpw") {
+    const pw = prompt(`New password for ${username}:`);
+    if (!pw) return;
+    body = { action: "set_password", username, password: pw };
+  }
+  if (action === "approve") body.months = 1;
+  const j = await api("/api/admin/action", body);
+  showMsg(j.message || j.error || "done", !!j.ok);
+  loadUsers();
+}
+
+async function setExpiry(username, expiry) {
+  const j = await api("/api/admin/action", { action: "set_expiry", username, expiry });
+  showMsg(j.message || j.error || "done", !!j.ok);
+}
+
+async function createUser() {
+  const j = await api("/api/admin/action", {
+    action: "create", new_username: $("nu").value.trim(),
+    password: $("np").value, expiry: $("ne").value,
+  });
+  showMsg(j.message || j.error || "done", !!j.ok);
+  if (j.ok) { $("nu").value = $("np").value = $("ne").value = ""; loadUsers(); }
+}
+
+// auto-check session on load
+fetch("/api/admin/users", { credentials: "same-origin" })
+  .then(r => r.ok ? showDash() : showLogin())
+  .catch(showLogin);
+</script>
+</body>
+</html>
